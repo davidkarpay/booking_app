@@ -5,6 +5,8 @@ from datetime import datetime
 from PyQt5.QtWidgets import QWidget, QLabel, QTextEdit, QPushButton, QVBoxLayout
 from PyQt5.QtGui import QFont
 
+from logger import logger
+
 class DetailsView(QWidget):
     """Widget for displaying detailed booking information"""
     def __init__(self, parent=None):
@@ -33,6 +35,14 @@ class DetailsView(QWidget):
     
     def show_details(self, entry_data):
         """Display details for the specified booking entry"""
+        if not entry_data or not isinstance(entry_data, dict):
+            logger.error(f"Invalid entry data: {type(entry_data)}")
+            self.details_text.setPlainText("Error: Invalid booking data")
+            return
+            
+        # Log that we're showing details
+        logger.debug(f"Showing details for booking: {entry_data.get('Booking Number', 'Unknown')}")
+        
         # Update the header
         self.header.setText(f"Booking Details for {entry_data.get('Name', 'Unknown')}")
         
@@ -81,3 +91,6 @@ class DetailsView(QWidget):
         
         # Set the HTML content
         self.details_text.setHtml(details_html)
+        
+        # Log successful display
+        logger.debug(f"Details displayed for booking: {entry_data.get('Booking Number', 'Unknown')}")

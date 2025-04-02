@@ -468,12 +468,12 @@ class PBSOBookingBlotter(QWidget):
     
     def export_to_csv(self):
         """Export booking data to CSV file"""
-        if export_to_csv(self.booking_data):
+        if export_to_csv(self.booking_data, self):
             self.status_label.setText("Status: Data exported to CSV successfully")
     
     def export_to_excel(self):
         """Export booking data to Excel file with formatting"""
-        if export_to_excel(self.booking_data):
+        if export_to_excel(self.booking_data, self):
             self.status_label.setText("Status: Data exported to Excel successfully")
     
     def clear_results(self):
@@ -581,6 +581,8 @@ class PBSOBookingBlotter(QWidget):
                     
                 except Exception as e:
                     self.log_debug(f"Error displaying record {i} for {name}: {str(e)}")
+                    import traceback
+                    self.log_debug(traceback.format_exc())
                     error_item = QListWidgetItem(f"⚠️ Error displaying booking #{i+1}: {str(e)}")
                     self.results_list.addItem(error_item)
             
