@@ -39,117 +39,183 @@ class ScraperWorker(QThread):
         try:
             if not text or not label:
                 return None
-            
+                
             lines = text.split("\n")
             for i, line in enumerate(lines):
-                # Look for the exact label or a partial match
                 if label in line:
-                    # Special handling for specific fields
-                    if label == "Booking Number:":
-                        # Look for the specific booking number pattern
-                        booking_num_match = re.search(r'Booking Number:\s*(\d+)', text)
-                        if booking_num_match:
-                            return booking_num_match.group(1)
-                    
-                    if label == "Booking Date/Time:":
-                        # Look for date in the format MM/DD/YYYY
-                        date_match = re.search(r'\d{2}/\d{2}/\d{4}', text)
-                        if date_match:
-                            return date_match.group(0)
-                    
-                    if label == "Release Date:":
-                        # Look for release date
-                        release_match = re.search(r'Release Date:\s*(\d{2}/\d{2}/\d{2})', text)
-                        if release_match:
-                            return release_match.group(1)
-                    
-                    if label == "Charges:":
-                        # Collect all lines of charges
-                        charges = []
-                        for j in range(i+1, len(lines)):
-                            # Stop when we hit another section with a colon
-                            if ":" in lines[j]:
-                                break
-                            # Skip empty lines and add non-empty charge lines
-                            if lines[j].strip():
-                                charges.append(lines[j].strip())
-                        return " | ".join(charges) if charges else None
-                    
+                    # Special case for Cell Location
                     if label == "Cell Location:":
-                        # Look for cell location
-                        cell_match = re.search(r'Facility:\s*(.+)', text)
-                        if cell_match and cell_match.group(1).strip() not in ['NO FILE', '']:
+                        # First try direct Cell Location pattern
+                        cell_match = re.search(r'Cell Location:([^\n]+)', text)
+                        if cell_match and cell_match.group(1).strip():
                             return cell_match.group(1).strip()
+                            
+                        # Try alternate format
+                        for j, check_line in enumerate(lines):
+                            if "Cell Location:" in check_line:
+                                # If cell location is on this line
+                                cell_text = check_line.replace("Cell Location:", "").strip()
+                                if cell_text:
+                                    return cell_text
+                                # If it's on the next line
+                                elif j + 1 < len(lines) and lines[j + 1].strip():
+                                    return lines[j + 1].strip()
+                        
+                        # As a backup, look for Facility line
+                        for j, check_line in enumerate(lines):
+                            if "Facility:" in check_line:
+                                facility = check_line.replace("Facility:", "").strip()
+                                if facility and not facility.lower() in ["no file", ""]:
+                                    return facility
                     
-                    # For other labels, return the next non-empty line
-                    for j in range(i+1, len(lines)):
-                        if lines[j].strip():
-                            return lines[j].strip()
-            
-            return None
+                    # Handle special case for charges which can span multiple lines
+                    if label == "Charges:":
+                        # First look for the "Charges" section header
+                        charges_section = -1
+                        for j, check_line in enumerate(lines):
+                            if check_line.strip() == "Charges":
+                                charges_section = j
+                                break
+                        
+                        if charges_section >= 0:
+                            # Collect all charge lines until we hit a section that starts with keywords
+                            charges = []
+                            j = charges_section + 1
+                            while j < len(lines) and not any(keyword in lines[j] for keyword in 
+                                  ["Bond:", "Original Bond:", "Current Bond:", "Bond Information", "Release Date:"]):
+                                if lines[j].strip():
+                                    charges.append(lines[j].strip())
+                                j += 1
+                            
+                            return " | ".join(charges) if charges else None
+                        
+                        # Alternate approach - look for lines between "Charges:" and next section
+                        for j, check_line in enumerate(lines):
+                            if "Charges:" in check_line:
+                                charges = []
+                                k = j + 1
+                                while k < len(lines) and not any(keyword in lines[k] for keyword in 
+                                      ["Bond:", "Original Bond:", "Current Bond:", "Bond Information", "Release Date:"]):
+                                    if lines[k].strip():
+                                        charges.append(lines[k].strip())
+                                    k += 1
+                                
+                                return " | ".join(charges) if charges else None
+                    
+                    # For booking number, use regex to extract the exact number
+                    if label == "Booking Number:":
+                        booking_match = re.search(r'Booking Number:\s*(\d+)', text)
+                        if booking_match:
+                            return booking_match.group(1)
+                    
+                    # For booking date, first try regex then fallback to next line
+                    if label == "Booking Date/Time:":
+                        date_match = re.search(r'Booking Date/Time:\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})', text)
+                        if date_match:
+                            return date_match.group(1)
+                        
+                        # Try alternate format
+                        alt_match = re.search(r'Booking Date/Time:(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})', text)
+                        if alt_match:
+                            return alt_match.group(1)
+                    
+                    # For release date, use regex
+                    if label == "Release Date:":
+                        release_match = re.search(r'Release Date:\s*([^\n]+)', text)
+                        if release_match:
+                            return release_match.group(1).strip()
+                    
+                    # For regular fields, check next line
+                    if i + 1 < len(lines):
+                        return lines[i + 1].strip()
+                    else:
+                        return None
         except Exception as e:
             logger.error(f"Error extracting value for {label}: {str(e)}")
             return None
+        
+        # If we got here, the label wasn't found
+        return None
     
-def determine_status(self, release_date_str, cell_location):
-    """
-    Determine the custody status with more robust logic
-    
-    Args:
-        release_date_str (str): Release date string
-        cell_location (str): Cell location string
-    
-    Returns:
-        str: Status ('In Custody', 'Released', or 'Unknown')
-    """
-    # Logging details for debugging
-    logger.debug(f"Status Determination Debug:")
-    logger.debug(f"Release Date String: {release_date_str}")
-    logger.debug(f"Cell Location: {cell_location}")
-    
-    # Normalize input strings
-    release_date_str = str(release_date_str).strip().lower() if release_date_str else ""
-    cell_location = str(cell_location).strip().lower() if cell_location else ""
-    
-    # Check release date first
-    if release_date_str and release_date_str not in ['', 'n/a', 'unknown', 'still in custody']:
-        try:
-            # Remove any text like "Time:"
-            clean_date = re.sub(r'\s*time:.*', '', release_date_str, flags=re.IGNORECASE)
-            release_date = self.parse_date(clean_date)
+    def determine_status(self, release_date_str, cell_location):
+        """
+        Determine the custody status with more robust logic
+        
+        Args:
+            release_date_str (str): Release date string
+            cell_location (str): Cell location string
+        
+        Returns:
+            str: Status ('In Custody', 'Released', or 'Unknown')
+        """
+        # Logging details for debugging
+        logger.debug(f"Status Determination Debug:")
+        logger.debug(f"Release Date String: {release_date_str}")
+        logger.debug(f"Cell Location: {cell_location}")
+        
+        # Normalize input strings
+        release_date_str = str(release_date_str).strip().lower() if release_date_str else ""
+        cell_location = str(cell_location).strip().lower() if cell_location else ""
+        
+        # Check release date first
+        if release_date_str and release_date_str not in ['', 'n/a', 'unknown', 'still in custody']:
+            try:
+                # Remove any text like "Time:"
+                clean_date = re.sub(r'\s*time:.*', '', release_date_str, flags=re.IGNORECASE)
+                release_date = self.parse_date(clean_date)
+                
+                if release_date and release_date <= datetime.now():
+                    return "Released"
+            except Exception as e:
+                logger.warning(f"Date parsing error: {e}")
+        
+        # Check cell location for custody indicators
+        custody_indicators = [
+            'jail', 'prison', 'facility', 'block', 'pod', 'cell', 
+            'detention', 'surety bond', 'bonds', 'holding', 'center'
+        ]
+        
+        if cell_location and any(indicator in cell_location for indicator in custody_indicators):
+            return "In Custody"
+        
+        # If N/A is specified for release date, assume in custody
+        if release_date_str == "n/a":
+            return "In Custody"
             
-            if release_date and release_date <= datetime.now():
-                return "Released"
-        except Exception as e:
-            logger.warning(f"Date parsing error: {e}")
-    
-    # Check cell location for custody indicators
-    custody_indicators = [
-        'jail', 'prison', 'facility', 'block', 'pod', 'cell', 
-        'detention', 'surety bond', 'bonds', 'holding'
-    ]
-    
-    if cell_location and any(indicator in cell_location for indicator in custody_indicators):
-        return "In Custody"
-    
-    # Check raw data for additional indicators
-    # You might want to implement more sophisticated checks based on your specific data sources
-    
-    return "Unknown"
+        # Default to Unknown if we can't determine status
+        return "Unknown"
     
     def parse_date(self, date_str):
-        """Parse date string to datetime object"""
-        if not date_str:
+        """
+        Parse date string to datetime object with improved handling of different date formats.
+        """
+        if not date_str or date_str == "N/A" or date_str == "Still in custody":
             return None
-        for fmt in ("%m/%d/%Y %H:%M", "%m/%d/%y %H:%M", "%m/%d/%y"):
+            
+        # Clean up the date string
+        date_str = date_str.strip()
+        
+        # Try multiple date formats
+        formats = [
+            "%m/%d/%Y %H:%M", 
+            "%m/%d/%Y %H:%M:%S",
+            "%m/%d/%Y", 
+            "%m/%d/%y %H:%M",
+            "%m/%d/%y"
+        ]
+        
+        for fmt in formats:
             try:
                 return datetime.strptime(date_str, fmt)
             except ValueError:
                 continue
+                
+        # If we got here, log the failure but don't crash
         logger.warning(f"Failed to parse date: {date_str}")
         return None
     
     def run(self):
+        driver = None
         try:
             # Add jitter to prevent all workers from starting at the exact same time
             jitter = random.uniform(0.5, 3.0)
@@ -247,35 +313,39 @@ def determine_status(self, release_date_str, cell_location):
                     results.append(text)
                     
                     # Extract structured data
-                    # Set default values to handle cases where extraction might fail
                     booking_number = self.extract_value(text, "Booking Number:") or "Unknown"
                     booking_date_str = self.extract_value(text, "Booking Date/Time:") or "Unknown"
                     release_date_str = self.extract_value(text, "Release Date:") or "N/A"
                     charges = self.extract_value(text, "Charges:") or "Not specified"
                     cell_location = self.extract_value(text, "Cell Location:") or "Not specified"
                     
-                    # Parse dates
+                    # Parse dates with improved parsing
                     booking_date = self.parse_date(booking_date_str)
-                    release_date = self.parse_date(release_date_str)
+                    release_date = self.parse_date(release_date_str) if release_date_str != "N/A" else None
                     
-                    # Calculate time served
+                    # Determine status with more robust logic
+                    status = self.determine_status(release_date_str, cell_location)
+                    
+                    # Calculate time served with better handling
                     if booking_date:
-                        if release_date:
-                            time_served = (release_date - booking_date).days + 1
+                        if release_date and release_date > booking_date:
+                            time_served = (release_date - booking_date).days
+                            if time_served < 1:  # Ensure at least 1 day
+                                time_served = 1
                         else:
-                            time_served = (datetime.now() - booking_date).days + 1
+                            # Still in custody, calculate from booking date to today
+                            time_served = (datetime.now() - booking_date).days
+                            if time_served < 0:  # Sanity check
+                                time_served = 0
                     else:
                         time_served = 0
-                    
-                    # Determine status
-                    status = self.determine_status(release_date_str, cell_location)
                     
                     # Add structured data for this booking
                     structured_data = {
                         "Name": f"{self.last_name}, {self.first_name}",
                         "Booking Number": booking_number,
                         "Booking Date": booking_date_str,
-                        "Release Date": release_date_str or "N/A" if status == "Released" else "Still in custody",
+                        "Release Date": release_date_str if status == "Released" else "Still in custody",
                         "Status": status,
                         "Time Served (Days)": time_served,
                         "Charges": charges,
@@ -300,54 +370,11 @@ def determine_status(self, release_date_str, cell_location):
         except Exception as e:
             error_message = f"Error processing {self.last_name}, {self.first_name}: {str(e)}"
             logger.error(error_message)
+            import traceback
+            logger.error(traceback.format_exc())
             self.result_ready.emit(f"{self.last_name}, {self.first_name}", error_message, [])
             try:
-                driver.quit()
+                if driver:
+                    driver.quit()
             except:
                 pass
-    
-    def extract_value(self, text, label):
-        """
-        Extract values from the text following a specified label.
-        Enhanced to handle multi-line results and edge cases.
-        """
-        try:
-            if not text or not label:
-                return None
-                
-            lines = text.split("\n")
-            for i, line in enumerate(lines):
-                if label in line:
-                    # Handle special case for charges which can span multiple lines
-                    if label == "Charges:":
-                        # Collect all lines until we hit the next label or end
-                        charges = []
-                        j = i + 1
-                        while j < len(lines) and ":" not in lines[j]:
-                            charges.append(lines[j].strip())
-                            j += 1
-                        return " ".join(charges) if charges else None
-                    
-                    # For regular fields that are on the next line
-                    if i + 1 < len(lines):
-                        return lines[i + 1].strip()
-                    else:
-                        return None
-        except Exception as e:
-            logger.error(f"Error extracting value for {label}: {str(e)}")
-            return None
-        
-        # If we got here, the label wasn't found
-        return None
-
-    def parse_date(self, date_str):
-        """Parse date string to datetime object"""
-        if not date_str:
-            return None
-        for fmt in ("%m/%d/%Y %H:%M", "%m/%d/y %H:%M"):
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        logger.warning(f"Failed to parse date: {date_str}")
-        return None
