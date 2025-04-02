@@ -573,15 +573,12 @@ class PBSOBookingBlotter(QWidget):
                     # Add a "View Details" button for this entry
                     details_item = QListWidgetItem("    👁️ View Complete Details")
                     details_item.setData(Qt.UserRole, entry)
-                    # The section around line 576 should look like this:
-                    details_item = QListWidgetItem("    👁️ View Complete Details")
-                    details_item.setData(Qt.UserRole, entry)
                     details_item.setForeground(QColor("#0066cc"))
                     font = details_item.font()
                     font.setUnderline(True)
                     details_item.setFont(font)
                     self.results_list.addItem(details_item)
-                    self.results_list.addItem(details_item)
+                    
                 except Exception as e:
                     self.log_debug(f"Error displaying record {i} for {name}: {str(e)}")
                     error_item = QListWidgetItem(f"⚠️ Error displaying booking #{i+1}: {str(e)}")
