@@ -333,86 +333,61 @@ class PBSOBookingBlotter(QWidget):
         username = self.input_user.text().strip()
         password = self.input_pass.text().strip()
         raw_text = self.input_names.toPlainText().strip()
-        
+
         if not raw_text:
             self.status_label.setText("⚠️ Please enter at least one name!")
             return
-        
+
+        # --- parse names into (last, first) tuples ---
         names_list = []
         for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
             if "," in line:
-                parts = line.split(",")
-                if len(parts) >= 2:
-                    # Use only the first word of the last name and first name
-                    last = parts[0].strip().split()[0]
-                    first = parts[1].strip().split()[0]
-                    names_list.append((last, first))
-        
-        if not names_list:
-            self.status_label.setText("⚠️ Invalid format! Use 'Lastname, Firstname' per line.")
-            return
-        
-        # Get user settings
-        max_workers = self.worker_spinner.value()
-        min_delay = self.min_delay_spinner.value()
-        max_delay = self.max_delay_spinner.value()
-        
-        # Check if max_delay is greater than min_delay
-        if max_delay <= min_delay:
-            self.max_delay_spinner.setValue(min_delay + 1)
-            max_delay = min_delay + 1
-        
-        # Count total names
+                parts = [p.strip() for p in line.split(",", 1)]
+                last_name, first_name = parts[0], parts[1]
+            else:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                first_name, last_name = parts[-1], " ".join(parts[:-1])
+
+            names_list.append((last_name.upper(), first_name.title()))
+
         total_names = len(names_list)
-        
-        # Log search parameters
-        self.log_debug(f"Starting search for {total_names} names with {max_workers} workers")
-        self.log_debug(f"Delay range: {min_delay}-{max_delay} seconds")
-        
-        # Warning if too many names
-        if total_names > 50:
-            self.status_label.setText(f"⚠️ Warning: You are about to search for {total_names} names. This may put significant load on the website.")
-            self.search_button.setText("Confirm Search")
-            self.search_button.setStyleSheet("background-color: #ffcccc;")
-            
-            # Create a one-time reset function
-            def reset_button():
-                self.search_button.setText("Start Parallel Search")
-                self.search_button.setStyleSheet("")
-                self.search_button.clicked.disconnect(reset_button)
-                self.search_button.clicked.connect(self.run_search)
-            
-            self.search_button.clicked.disconnect(self.run_search)
-            self.search_button.clicked.connect(reset_button)
-            return
-        
-        # Start the search
+
+        # --- immediately initialize search (cap removed) ---
         self.status_label.setText("Status: Initializing parallel searches...")
         self.progress_label.setText(f"Progress: 0% (0/{total_names})")
-        
-        # Clear previous results and show searching message
         self.results_list.clear()
-        searching_item = QListWidgetItem(f"Searching for {total_names} names with {max_workers} concurrent workers...\n\nPlease wait. This could take some time depending on the number of names and concurrent searches.\n\nUsing {min_delay}-{max_delay} second delays between requests to avoid overloading the website.")
-        self.results_list.addItem(searching_item)
-        
-        # Make sure we're on the summary view
-        self.results_stack.setCurrentIndex(0)
-        
-        # Create and start the scraper
-        self.scraper = PBSOParallelScraper(
-            username, 
-            password, 
-            names_list, 
-            max_workers,
-            min_delay,
-            max_delay
+        intro = (
+            f"Searching for {total_names} names "
+            "with delays between requests to avoid overloading the website."
         )
-        self.scraper.search_complete.connect(self.display_results)
-        self.scraper.status_update.connect(self.update_status)
-        self.scraper.progress_update.connect(self.update_progress)
-        self.scraper.data_ready.connect(self.handle_data_ready)
-        self.scraper.start()
-    
+        self.results_list.addItem(QListWidgetItem(intro))
+        self.results_stack.setCurrentIndex(0)
+
+        # --- launch the scraper thread ---
+        scraper = PBSOParallelScraper(
+            username,
+            password,
+            names_list,
+            self.worker_spinner.value(),
+            self.min_delay_spinner.value(),
+            self.max_delay_spinner.value()
+        )
+        scraper.status_update.connect(lambda msg: self.status_label.setText(msg))
+        scraper.progress_update.connect(
+            lambda done, tot: self.progress_label.setText(
+                f"Progress: {int(done / tot * 100)}% ({done}/{tot})"
+            )
+        )
+        scraper.search_complete.connect(lambda results: self.results_list.addItem(results))
+        scraper.data_ready.connect(self.handle_data_ready)
+        scraper.start()
+
     def update_status(self, status):
         """Update the status label with the current status"""
         self.status_label.setText(f"Status: {status}")
